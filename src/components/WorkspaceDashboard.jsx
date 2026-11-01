@@ -3,52 +3,16 @@ import CentreManagement from './CentreManagement.jsx'
 import StaffManagement from './StaffManagement.jsx'
 import DoctorManagement from './DoctorManagement.jsx'
 import NewCaseModal from './NewCaseModal.jsx'
-
-function CasesListView({ notice }) {
-  const sampleCases = useMemo(
-    () => [
-      { id: '1234501', patient: 'Aarav Mehta', modality: 'CT', status: 'Unassigned', priority: 'Normal' },
-      { id: '1234502', patient: 'Nisha Verma', modality: 'MRI', status: 'Assigned', priority: 'Emergency' },
-    ],
-    [],
-  )
-
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-      <p className="text-sm font-semibold uppercase tracking-wider text-teal-700">Cases</p>
-      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Primary Cases List</h2>
-      {notice && <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</p>}
-      <div className="mt-6 overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Case ID</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Patient</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Modality</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Priority</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {sampleCases.map((item) => (
-              <tr key={item.id}>
-                <td className="px-4 py-3 text-sm text-slate-900">{item.id}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{item.patient}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{item.modality}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{item.priority}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{item.status}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  )
-}
+import CaseManagementTable from './CaseManagementTable.jsx'
 
 function WorkspaceDashboard({ user, onLogout }) {
   const [activeView, setActiveView] = useState('cases')
   const [caseNotice, setCaseNotice] = useState('')
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isCaseModalOpen, setIsCaseModalOpen] = useState(false)
+  const [caseModalMode, setCaseModalMode] = useState('create')
+  const [selectedCase, setSelectedCase] = useState(null)
+  const [casesReloadKey, setCasesReloadKey] = useState(0)
   const displayName = user.name || user.email || user.id
   const normalizedRole = typeof user?.role === 'string' ? user.role.trim().toLowerCase() : ''
   const isDiagnosticCentreUser = ['centre_user', 'centre_manager'].includes(normalizedRole)
@@ -73,9 +37,20 @@ function WorkspaceDashboard({ user, onLogout }) {
     return links
   }, [canCreateCase, canManageCentresAndStaff, isDiagnosticCentreUser])
 
+  const handleSidebarSelection = (key) => {
+    if (key === 'new-case') {
+      setCaseModalMode('create')
+      setSelectedCase(null)
+      setIsCaseModalOpen(true)
+      setActiveView('cases')
+      return
+    }
+    setActiveView(key)
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-8">
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-[96rem]">
         <header className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="grid size-11 place-items-center rounded-xl bg-teal-700 text-lg font-bold text-white">R</div>
@@ -89,29 +64,56 @@ function WorkspaceDashboard({ user, onLogout }) {
           </button>
         </header>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="mb-3 px-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Management</p>
+        <div className={`mt-6 grid gap-4 ${isSidebarCollapsed ? 'lg:grid-cols-[72px_minmax(0,1fr)]' : 'lg:grid-cols-[250px_minmax(0,1fr)]'}`}>
+          <aside className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <button
+              aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className="mb-3 flex w-full items-center justify-center rounded-xl border border-slate-200 px-2 py-2 text-slate-700 hover:bg-slate-50"
+              onClick={() => setIsSidebarCollapsed((previous) => !previous)}
+              type="button"
+            >
+              <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24">
+                <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            {!isSidebarCollapsed && <p className="mb-3 px-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Management</p>}
             <nav className="space-y-2">
               {sidebarLinks.map((item) => (
                 <button
                   key={item.key}
-                  className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${
+                  className={`w-full rounded-xl px-3 py-2 ${isSidebarCollapsed ? 'text-center' : 'text-left'} text-sm font-medium transition ${
                     activeView === item.key
                       ? 'bg-teal-700 text-white'
                       : 'text-slate-700 hover:bg-slate-100'
                   }`}
-                  onClick={() => setActiveView(item.key)}
+                  onClick={() => handleSidebarSelection(item.key)}
+                  title={item.label}
                   type="button"
                 >
-                  {item.label}
+                  {isSidebarCollapsed ? item.label[0] : item.label}
                 </button>
               ))}
             </nav>
           </aside>
 
           <section>
-            {(activeView === 'cases' || activeView === 'new-case') && <CasesListView notice={caseNotice} />}
+            {activeView === 'cases' && (
+              <CaseManagementTable
+                notice={caseNotice}
+                onEditCase={(caseItem) => {
+                  setSelectedCase(caseItem)
+                  setCaseModalMode('edit')
+                  setIsCaseModalOpen(true)
+                }}
+                onReopenCase={(caseItem) => {
+                  setSelectedCase(caseItem)
+                  setCaseModalMode('reopen')
+                  setIsCaseModalOpen(true)
+                }}
+                reloadKey={casesReloadKey}
+                user={user}
+              />
+            )}
             {activeView === 'add-centre' && <CentreManagement user={user} />}
             {activeView === 'add-staff' && <StaffManagement user={user} />}
             {activeView === 'add-doctor' && <DoctorManagement user={user} />}
@@ -120,11 +122,33 @@ function WorkspaceDashboard({ user, onLogout }) {
       </div>
 
       <NewCaseModal
-        isOpen={canCreateCase && activeView === 'new-case'}
-        onClose={() => setActiveView('cases')}
+        initialCase={selectedCase}
+        isOpen={canCreateCase && isCaseModalOpen}
+        mode={caseModalMode}
+        onClose={() => {
+          setIsCaseModalOpen(false)
+          setSelectedCase(null)
+        }}
         onCreated={(createdCase) => {
           setCaseNotice(`Case #${createdCase?.case_id} ${createdCase?.status === 'Draft' ? 'saved as draft' : 'submitted'} successfully.`)
+          setCasesReloadKey((previous) => previous + 1)
           setActiveView('cases')
+          setIsCaseModalOpen(false)
+          setSelectedCase(null)
+        }}
+        onUpdated={(updatedCase) => {
+          setCaseNotice(`Case #${updatedCase?.case_id} updated successfully.`)
+          setCasesReloadKey((previous) => previous + 1)
+          setActiveView('cases')
+          setIsCaseModalOpen(false)
+          setSelectedCase(null)
+        }}
+        onReopened={(reopenedCase) => {
+          setCaseNotice(`Case #${reopenedCase?.case_id} is reopened.`)
+          setCasesReloadKey((previous) => previous + 1)
+          setActiveView('cases')
+          setIsCaseModalOpen(false)
+          setSelectedCase(null)
         }}
         user={user}
       />

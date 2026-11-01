@@ -8,6 +8,7 @@ const defaultDoctorForm = {
   lastName: '',
   email: '',
   specialization: '',
+  regNo: '',
   doctorType: 'A',
   pinCode: '',
   address: '',
@@ -79,6 +80,7 @@ function DoctorManagement({ user }) {
         lastName: doctor.last_name || '',
         email: doctor.email || '',
         specialization: doctor.specialization || '',
+        regNo: doctor.reg_no || '',
         doctorType: (doctor.doctor_type || 'A').toUpperCase(),
         pinCode: doctor.pin_code != null ? String(doctor.pin_code) : '',
         address: doctor.address || '',
@@ -127,6 +129,7 @@ function DoctorManagement({ user }) {
       lastName: form.lastName,
       email: form.email,
       specialization: form.specialization,
+      regNo: form.regNo,
       doctorType: form.doctorType,
       pinCode: form.pinCode,
       address: form.address,
@@ -211,7 +214,11 @@ function DoctorManagement({ user }) {
           </div>
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="doctor-specialization">Specialization</label>
-            <input className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="doctor-specialization" onChange={(event) => setForm((previous) => ({ ...previous, specialization: event.target.value }))} value={form.specialization} />
+            <input className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="doctor-specialization" onChange={(event) => setForm((previous) => ({ ...previous, specialization: event.target.value }))} required value={form.specialization} />
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="doctor-reg-no">Registration Number</label>
+            <input className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="doctor-reg-no" onChange={(event) => setForm((previous) => ({ ...previous, regNo: event.target.value }))} placeholder="REG. NO.: MP-20078713" required value={form.regNo} />
           </div>
         </div>
 
