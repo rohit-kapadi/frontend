@@ -1,4 +1,5 @@
 export const managementApiBaseUrl = 'http://localhost:5000/api'
+import { clearStoredSession, isSessionDayExpired } from './sessionAuth.js'
 
 export function getRequestHeaders(user) {
   const headers = { 'Content-Type': 'application/json' }
@@ -14,14 +15,28 @@ export function getRequestHeaders(user) {
   if (typeof user?.centre_id === 'string' && user.centre_id.length > 0) {
     headers['x-centre-id'] = user.centre_id
   }
+  if (typeof user?.session_day === 'string' && user.session_day.length > 0) {
+    headers['x-session-day'] = user.session_day
+  }
   return headers
 }
 
+function buildFriendlyErrorMessage(result, fallbackMessage) {
+  const rawError = result?.error || result?.message || fallbackMessage
+  if (typeof rawError !== 'string') return fallbackMessage
+  return rawError.replace(/^\[[A-Z]+\s+[^\]]+\]\s*/, '').trim() || fallbackMessage
+}
+
 export async function requestWithScope(path, user, options = {}) {
+  if (isSessionDayExpired(user?.session_day)) {
+    clearStoredSession()
+    if (typeof window !== 'undefined') window.location.assign('/')
+    throw new Error('Your session has expired. Please sign in again.')
+  }
+
   const headers = { ...getRequestHeaders(user), ...(options.headers ?? {}) }
   // Let the browser set the multipart boundary for FormData bodies.
   if (options.body instanceof FormData) delete headers['Content-Type']
-  const method = String(options.method || 'GET').toUpperCase()
 
   const response = await fetch(`${managementApiBaseUrl}${path}`, {
     ...options,
@@ -39,15 +54,17 @@ export async function requestWithScope(path, user, options = {}) {
   }
 
   if (!response.ok) {
-    const errorMessage = result?.error
-      || result?.message
-      || (rawBody ? `HTTP ${response.status} ${response.statusText}: ${rawBody.slice(0, 220)}` : `HTTP ${response.status} ${response.statusText}`)
-    throw new Error(`[${method} ${path}] ${errorMessage}`)
+    if (response.status === 401) {
+      clearStoredSession()
+      if (typeof window !== 'undefined') window.location.assign('/')
+    }
+    const errorMessage = buildFriendlyErrorMessage(result, 'Request could not be completed. Please try again.')
+    throw new Error(errorMessage)
   }
 
   if (!result || result.status !== 'success') {
-    const fallback = rawBody ? rawBody.slice(0, 220) : 'Request failed. Please try again.'
-    throw new Error(`[${method} ${path}] ${result?.error || fallback}`)
+    const fallback = 'Request failed. Please try again.'
+    throw new Error(buildFriendlyErrorMessage(result, fallback))
   }
 
   return result

@@ -21,6 +21,8 @@ const defaultForm = {
   priority: 'normal',
   remark: '',
   selectedCentreId: '',
+  status: 'Draft',
+  assignedDoctorId: '',
 }
 
 const adminRoles = ['admin', 'nexus_admin', 'group_admin']
@@ -40,9 +42,13 @@ const mapCaseToForm = (caseItem, fallbackCentreId) => ({
   priority: toPriorityInput(caseItem?.priority),
   remark: caseItem?.remark || '',
   selectedCentreId: caseItem?.centre_id || fallbackCentreId || '',
+  status: caseItem?.status || 'Draft',
+  assignedDoctorId: caseItem?.assigned_doctor_id || '',
 })
 
-function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened, mode = 'create', initialCase = null }) {
+const adminStatusOptions = ['Draft', 'Unassigned', 'Assigned', 'Reverted', 'Reopened', 'Submitted']
+
+function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened, onDeleted, mode = 'create', initialCase = null }) {
   const [form, setForm] = useState(defaultForm)
   const [scanFiles, setScanFiles] = useState([])
   const [reopenMessage, setReopenMessage] = useState('')
@@ -51,6 +57,7 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
   const [notice, setNotice] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [centres, setCentres] = useState([])
+  const [doctors, setDoctors] = useState([])
   const [existingAttachments, setExistingAttachments] = useState([])
   const [isAttachmentsLoading, setIsAttachmentsLoading] = useState(false)
 
@@ -95,6 +102,18 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
       })
       .catch((loadError) => {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load centres right now.')
+      })
+  }, [isAdmin, isOpen, user])
+
+  useEffect(() => {
+    if (!isOpen || !isAdmin) return
+    requestWithScope('/doctors', user)
+      .then((result) => {
+        const fetchedDoctors = Array.isArray(result.doctors) ? result.doctors : []
+        setDoctors(fetchedDoctors)
+      })
+      .catch((loadError) => {
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load doctors right now.')
       })
   }, [isAdmin, isOpen, user])
 
@@ -190,6 +209,17 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
       return
     }
 
+    if (isAdmin && isEditMode && form.status === 'Assigned' && !form.assignedDoctorId.trim()) {
+      setError('Assigned status requires selecting a doctor.')
+      return
+    }
+
+    const statusChanged = isAdmin && isEditMode && String(form.status || '') !== String(initialCase?.status || '')
+    const assigneeChanged = isAdmin && isEditMode && String(form.assignedDoctorId || '') !== String(initialCase?.assigned_doctor_id || '')
+    if ((statusChanged || assigneeChanged) && !window.confirm('You are about to change the case status or assigned doctor. This can affect case ownership and workflow visibility. Do you want to continue?')) {
+      return
+    }
+
     setIsSubmitting(true)
     try {
       const payload = new FormData()
@@ -207,6 +237,10 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
       payload.append('submit', String(shouldSubmit))
       payload.append('reopenCase', String(isReopenMode))
       payload.append('reopenMessage', reopenMessage.trim())
+      if (isAdmin && isEditMode) {
+        payload.append('status', form.status)
+        payload.append('assignedDoctorId', form.assignedDoctorId.trim())
+      }
       scanFiles.forEach((file) => payload.append('scanFiles', file))
 
       const path = isUpdateMode ? `/cases/${encodeURIComponent(String(initialCase?.case_id || ''))}` : '/cases'
@@ -225,6 +259,24 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
     } catch (submitError) {
       const operation = isReopenMode ? 'reopen' : isEditMode ? 'update' : 'create'
       setError(submitError instanceof Error ? submitError.message : `Unable to ${operation} case right now.`)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function handleDeleteCase() {
+    if (!isAdmin || !isEditMode || !initialCase?.case_id) return
+    const confirmed = window.confirm('Delete this case permanently? This will remove the case and all uploaded attachments. This action cannot be undone.')
+    if (!confirmed) return
+
+    setError('')
+    setNotice('')
+    setIsSubmitting(true)
+    try {
+      const result = await requestWithScope(`/cases/${encodeURIComponent(String(initialCase.case_id))}`, user, { method: 'DELETE' })
+      onDeleted?.({ case_id: initialCase.case_id, message: result.message })
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete case right now.')
     } finally {
       setIsSubmitting(false)
     }
@@ -253,6 +305,30 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
                   <option key={centre.centre_id} value={centre.centre_id}>{centre.centre_id} - {centre.name}</option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {isAdmin && isEditMode && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700" htmlFor="case-status">Status</label>
+                <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="case-status" onChange={(event) => setForm((previous) => ({ ...previous, status: event.target.value }))} value={form.status}>
+                  {adminStatusOptions.map((statusOption) => (
+                    <option key={statusOption} value={statusOption}>{statusOption}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700" htmlFor="case-doctor">Assigned doctor</label>
+                <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="case-doctor" onChange={(event) => setForm((previous) => ({ ...previous, assignedDoctorId: event.target.value }))} value={form.assignedDoctorId}>
+                  <option value="">Unassigned</option>
+                  {doctors.map((doctor) => (
+                    <option key={doctor.doctor_id} value={doctor.doctor_id}>
+                      {doctor.doctor_id} - {[doctor.first_name, doctor.last_name].filter(Boolean).join(' ').trim() || doctor.email || doctor.doctor_id}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
 
@@ -325,7 +401,15 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
           {notice && <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>}
 
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              {isAdmin && isEditMode && (
+                <button className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60" disabled={isSubmitting} onClick={handleDeleteCase} type="button">
+                  Delete Case
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
             <button className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100" onClick={onClose} type="button">Cancel</button>
             {!isReopenMode && (
               <>
@@ -334,6 +418,7 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
               </>
             )}
             {isReopenMode && <button className="rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-60" disabled={isSubmitting} type="submit" value="reopen">{isSubmitting ? 'Working...' : 'Reopen Case'}</button>}
+            </div>
           </div>
         </form>
       </div>

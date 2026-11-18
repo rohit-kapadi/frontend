@@ -299,7 +299,14 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
     const submittedDate = formatReportTimestamp(reportData.submitted_at || reportData.created_at)
     const ageYears = Number(reportData.age_year)
     const ageMonths = Number(reportData.age_month)
-    const formattedAge = `${Number.isFinite(ageYears) ? ageYears : 0}Yrs${Number.isFinite(ageMonths) ? ageMonths : 0}Months`
+    const hasValidYears = Number.isInteger(ageYears) && ageYears >= 0
+    const hasValidMonths = Number.isInteger(ageMonths) && ageMonths >= 0
+    let formattedAge = '—'
+    if (hasValidYears && hasValidMonths) {
+      if (ageYears > 0 && ageMonths > 0) formattedAge = `${ageYears} YRS / ${ageMonths} M`
+      else if (ageYears > 0) formattedAge = `${ageYears} YRS`
+      else formattedAge = `${ageMonths} M`
+    }
 
     let cursorY = 26
 
@@ -663,7 +670,7 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
       )}
 
       {attachmentModalCase && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/50 px-3 py-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-3 py-4">
           <div className="w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <div>
@@ -749,7 +756,12 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-700">Doctor Workbench</p>
                 <h3 className="text-lg font-semibold text-slate-900">Case #{doctorWorkCase.case_id}</h3>
               </div>
-              <button className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100" onClick={() => setDoctorWorkCase(null)} type="button">Close</button>
+              <div className="flex items-center gap-2">
+                <IconButton label="View attachments" onClick={() => openAttachmentViewer(doctorWorkCase)}>
+                  <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z" strokeLinecap="round" strokeLinejoin="round" /><circle cx="12" cy="12" r="3" /></svg>
+                </IconButton>
+                <button className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100" onClick={() => setDoctorWorkCase(null)} type="button">Close</button>
+              </div>
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div><label className="mb-1 block text-xs font-medium text-slate-700">Patient</label><input className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={formatPatientName(doctorWorkCase)} /></div>

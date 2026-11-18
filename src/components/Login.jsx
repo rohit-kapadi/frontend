@@ -1,35 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import WorkspaceDashboard from './WorkspaceDashboard.jsx'
-
-const userStorageKey = 'radiologistsClubUser'
-const nexusStorageKey = 'nexus_id'
+import { clearStoredSession, isSessionDayExpired, readStoredUser, storeAuthenticatedSession } from './sessionAuth.js'
 const apiBaseUrl = 'http://localhost:5000/api/auth'
-
-function readStoredUser() {
-  try {
-    const storedUser = localStorage.getItem(userStorageKey)
-    if (!storedUser) return null
-
-    const user = JSON.parse(storedUser)
-    if (
-      !user ||
-      typeof user !== 'object' ||
-      typeof user.role !== 'string' ||
-      typeof user.nexus_id !== 'string' ||
-      typeof user.id !== 'string'
-    ) {
-      localStorage.removeItem(userStorageKey)
-      localStorage.removeItem(nexusStorageKey)
-      return null
-    }
-
-    return user
-  } catch {
-    localStorage.removeItem(userStorageKey)
-    localStorage.removeItem(nexusStorageKey)
-    return null
-  }
-}
 
 function AuthShell({ children }) {
   return (
@@ -114,9 +86,8 @@ function Login() {
         throw new Error('Login response is missing account context.')
       }
 
-      localStorage.setItem(userStorageKey, JSON.stringify(result.user))
-      localStorage.setItem(nexusStorageKey, result.nexus_id)
-      setUser(result.user)
+      const storedUser = storeAuthenticatedSession(result.user, result.nexus_id, result.session_day)
+      setUser(storedUser)
       setPassword('')
     } catch (loginError) {
       setError(
@@ -232,11 +203,22 @@ function Login() {
   }
 
   function handleLogout() {
-    localStorage.removeItem(userStorageKey)
-    localStorage.removeItem(nexusStorageKey)
+    clearStoredSession()
     setUser(null)
     setPassword('')
   }
+
+  useEffect(() => {
+    if (!user) return undefined
+    const timer = window.setInterval(() => {
+      if (isSessionDayExpired(user.session_day)) {
+        setNotice('')
+        setError('Your session has expired. Please sign in again.')
+        handleLogout()
+      }
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [user])
 
   if (user) {
     return <WorkspaceDashboard user={user} onLogout={handleLogout} />

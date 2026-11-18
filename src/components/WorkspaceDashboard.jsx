@@ -4,6 +4,7 @@ import StaffManagement from './StaffManagement.jsx'
 import DoctorManagement from './DoctorManagement.jsx'
 import NewCaseModal from './NewCaseModal.jsx'
 import CaseManagementTable from './CaseManagementTable.jsx'
+import DashboardView from './DashboardView.jsx'
 
 function WorkspaceDashboard({ user, onLogout }) {
   const [activeView, setActiveView] = useState('cases')
@@ -33,6 +34,7 @@ function WorkspaceDashboard({ user, onLogout }) {
     if (canManageCentresAndStaff) {
       links.push({ key: 'add-doctor', label: 'Add Doctor' })
     }
+    links.push({ key: 'dashboard', label: 'Dashboard' })
 
     return links
   }, [canCreateCase, canManageCentresAndStaff, isDiagnosticCentreUser])
@@ -97,6 +99,7 @@ function WorkspaceDashboard({ user, onLogout }) {
           </aside>
 
           <section>
+            {activeView === 'dashboard' && <DashboardView user={user} />}
             {activeView === 'cases' && (
               <CaseManagementTable
                 notice={caseNotice}
@@ -145,6 +148,13 @@ function WorkspaceDashboard({ user, onLogout }) {
         }}
         onReopened={(reopenedCase) => {
           setCaseNotice(`Case #${reopenedCase?.case_id} is reopened.`)
+          setCasesReloadKey((previous) => previous + 1)
+          setActiveView('cases')
+          setIsCaseModalOpen(false)
+          setSelectedCase(null)
+        }}
+        onDeleted={(deletedCase) => {
+          setCaseNotice(deletedCase?.message || `Case #${deletedCase?.case_id} deleted successfully.`)
           setCasesReloadKey((previous) => previous + 1)
           setActiveView('cases')
           setIsCaseModalOpen(false)

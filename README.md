@@ -25,6 +25,16 @@ npm start
 
 ## Case management features
 
+- Dashboard tab includes:
+  - Global date filters with Start Date, Upto Date, and Quick Slots (Today, This Week, This Month, This Year).
+  - Admin-only Diagnostic Centre and Doctor filters.
+  - KPI summary cards for Reported, Unassigned, Pending, Total, and Action Required cases.
+  - Modality distribution donut chart and day-wise volume trend graph.
+  - Admin-only Average Turnaround Time (TAT) based on case creation to submission timestamps.
+  - Role-aware scoping:
+    - Admin: full cross-centre visibility with filter controls.
+    - Diagnostic centre users: scoped to their own centre.
+    - Doctors: scoped to their assigned/submitted workload.
 - Sidebar includes a collapse/expand toggle to increase workspace for data tables.
 - Case management table supports:
   - Active Cases and Submitted / History tabs for decluttered workflows
