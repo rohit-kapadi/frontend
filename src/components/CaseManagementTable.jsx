@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { jsPDF } from 'jspdf'
 import { requestWithScope } from './managementApi.js'
+import MultiSelectDropdown from './MultiSelectDropdown.jsx'
+import { useRealtimeSync } from './useRealtimeSync.js'
 
-const modalityFilterOptions = ['All', 'XRAY', 'CT', 'MRI', 'ECG']
+const modalityFilterOptions = ['XRAY', 'CT', 'MRI', 'ECG']
 const activeStatuses = ['Draft', 'Unassigned', 'Assigned', 'Reverted', 'Reopened']
 const historyStatuses = ['Submitted']
 const defaultSort = { key: 'priority', direction: 'asc' }
@@ -69,14 +71,14 @@ function IconButton({ label, onClick, children, className = '', disabled = false
   )
 }
 
-function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase }) {
+function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase, onAddCase }) {
   const [cases, setCases] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [localNotice, setLocalNotice] = useState('')
   const [searchText, setSearchText] = useState('')
-  const [modalityFilter, setModalityFilter] = useState('All')
-  const [statusFilter, setStatusFilter] = useState('All')
+  const [modalityFilters, setModalityFilters] = useState([])
+  const [statusFilters, setStatusFilters] = useState([])
   const [sortConfig, setSortConfig] = useState(defaultSort)
   const [activeTab, setActiveTab] = useState('active')
   const [ignoredCaseIds, setIgnoredCaseIds] = useState([])
@@ -109,8 +111,23 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
   const showStatusFilter = activeTab !== 'history'
   const totalColumns = showStatusColumn ? 10 : 9
   const effectiveNotice = localNotice || notice
+  const isCaseVisibleForUser = useCallback((caseItem) => {
+    if (!caseItem || String(caseItem.status || '') === 'Archived') return false
+    if (isCentreUser) {
+      return String(caseItem.centre_id || '') === String(user?.centre_id || '')
+    }
+    if (isDoctorView) {
+      const status = String(caseItem?.status || '')
+      if (status === 'Unassigned') return true
+      if (['Assigned', 'Submitted', 'Reopened'].includes(status)) {
+        return String(caseItem?.assigned_doctor_id || '') === String(currentUserId || '')
+      }
+      return false
+    }
+    return true
+  }, [currentUserId, isCentreUser, isDoctorView, user?.centre_id])
 
-  useEffect(() => {
+  const reloadCases = useCallback(() => {
     let mounted = true
     setIsLoading(true)
     setError('')
@@ -128,7 +145,30 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
         setIsLoading(false)
       })
     return () => { mounted = false }
-  }, [reloadKey, user])
+  }, [user])
+
+  useEffect(() => reloadCases(), [reloadCases, reloadKey])
+  const handleRealtimeCaseChange = useCallback((payload) => {
+    const nextCase = payload?.new || {}
+    const previousCase = payload?.old || {}
+    const caseId = Number(nextCase.case_id || previousCase.case_id)
+    if (!Number.isInteger(caseId)) return
+    setCases((previous) => {
+      if (payload?.eventType === 'DELETE') {
+        return previous.filter((entry) => Number(entry.case_id) !== caseId)
+      }
+      if (!isCaseVisibleForUser(nextCase)) {
+        return previous.filter((entry) => Number(entry.case_id) !== caseId)
+      }
+      const hasExisting = previous.some((entry) => Number(entry.case_id) === caseId)
+      if (hasExisting) {
+        return previous.map((entry) => (Number(entry.case_id) === caseId ? { ...entry, ...nextCase } : entry))
+      }
+      return [{ ...nextCase }, ...previous]
+    })
+    reloadCases()
+  }, [isCaseVisibleForUser, reloadCases])
+  useRealtimeSync({ user, tables: ['cases'], onChange: handleRealtimeCaseChange })
 
   useEffect(() => {
     if (!isDoctorView) {
@@ -144,11 +184,10 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
   }, [ignoredCaseIds, ignoredCasesStorageKey, isDoctorView])
 
   const statusFilterOptions = useMemo(() => {
-    if (activeTab === 'history') return ['All']
-    if (isDoctorView) return ['All', 'Unassigned', 'Assigned', 'Reopened']
-    return ['All', ...activeStatuses]
+    if (activeTab === 'history') return historyStatuses
+    if (isDoctorView) return ['Unassigned', 'Assigned', 'Reopened']
+    return activeStatuses
   }, [activeTab, isDoctorView])
-  const normalizedStatusFilter = statusFilterOptions.includes(statusFilter) ? statusFilter : 'All'
 
   const filteredAndSortedCases = useMemo(() => {
     const normalizedSearch = searchText.trim().toLowerCase()
@@ -168,8 +207,8 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
         String(caseItem.centre_name || ''),
       ].join(' ').toLowerCase()
       if (normalizedSearch && !searchable.includes(normalizedSearch)) return false
-      if (modalityFilter !== 'All' && String(caseItem.modality || '').toUpperCase() !== modalityFilter) return false
-      if (showStatusFilter && normalizedStatusFilter !== 'All' && status !== normalizedStatusFilter) return false
+      if (modalityFilters.length > 0 && !modalityFilters.includes(String(caseItem.modality || '').toUpperCase())) return false
+      if (showStatusFilter && statusFilters.length > 0 && !statusFilters.includes(status)) return false
       if (isDoctorView && activeTab === 'active' && ignoredCaseIds.includes(Number(caseItem.case_id)) && !normalizedSearch) return false
       return true
     })
@@ -182,7 +221,7 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
       if (key === 'modality') return String(caseItem.modality || '').toLowerCase()
       if (key === 'study_name') return String(caseItem.study_name || '').toLowerCase()
       if (key === 'status') return String(caseItem.status || '').toLowerCase()
-      if (key === 'submit_date') return new Date(caseItem.submitted_at || caseItem.created_at || 0).getTime()
+      if (key === 'submit_date') return new Date(caseItem.completed_at || caseItem.submitted_at || caseItem.created_at || 0).getTime()
       if (key === 'priority') return isEmergencyPriority(caseItem.priority) ? 0 : 1
       return ''
     }
@@ -194,11 +233,11 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
         ? leftValue - rightValue
         : String(leftValue).localeCompare(String(rightValue))
       if (compare === 0) {
-        compare = new Date(right.submitted_at || right.created_at || 0).getTime() - new Date(left.submitted_at || left.created_at || 0).getTime()
+        compare = new Date(right.completed_at || right.submitted_at || right.created_at || 0).getTime() - new Date(left.completed_at || left.submitted_at || left.created_at || 0).getTime()
       }
       return sortConfig.direction === 'asc' ? compare : -compare
     })
-  }, [activeTab, cases, currentUserId, ignoredCaseIds, isDoctorView, modalityFilter, normalizedStatusFilter, searchText, showStatusFilter, sortConfig])
+  }, [activeTab, cases, currentUserId, ignoredCaseIds, isDoctorView, modalityFilters, searchText, showStatusFilter, sortConfig, statusFilters])
 
   const setQuickSort = (value) => {
     if (value === 'patient') setSortConfig({ key: 'patient_name', direction: 'asc' })
@@ -296,7 +335,7 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
     const impression = drawTextValue(reportData.doctor_impression)
     const doctorName = [reportData.doctor_first_name, reportData.doctor_last_name].filter(Boolean).join(' ').trim()
     const doctorDisplayName = doctorName ? `Dr. ${doctorName}` : '—'
-    const submittedDate = formatReportTimestamp(reportData.submitted_at || reportData.created_at)
+    const submittedDate = formatReportTimestamp(reportData.completed_at || reportData.submitted_at || reportData.created_at)
     const ageYears = Number(reportData.age_year)
     const ageMonths = Number(reportData.age_month)
     const hasValidYears = Number.isInteger(ageYears) && ageYears >= 0
@@ -527,6 +566,7 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
     const status = String(caseItem?.status || '')
     const caseId = Number(caseItem?.case_id)
     if (status === 'Reverted') return 'text-red-700'
+    if (status === 'Reopened' && isDoctorView) return 'text-red-700'
     if (status === 'Submitted') return activeTab === 'history' ? 'text-slate-700' : 'text-slate-500'
     if (status === 'Unassigned' && isDoctorView && activeTab === 'active' && !interactedCaseIds.includes(caseId)) return 'font-semibold text-slate-900'
     return 'text-slate-700'
@@ -537,6 +577,11 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <button className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${activeTab === 'active' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setActiveTab('active')} type="button">Active Cases</button>
         <button className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${activeTab === 'history' ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setActiveTab('history')} type="button">Submitted / History</button>
+        {!isDoctorView && (
+          <button className="ml-auto rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800" onClick={() => onAddCase?.()} type="button">
+            + Add Case
+          </button>
+        )}
       </div>
 
       {effectiveNotice && <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{effectiveNotice}</p>}
@@ -547,13 +592,9 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
           <input className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setSearchText(event.target.value)} placeholder="Search by patient, case ID, or study" value={searchText} />
           {searchText && <button aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700" onClick={() => setSearchText('')} type="button">✕</button>}
         </div>
-        <select className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setModalityFilter(event.target.value)} value={modalityFilter}>
-          {modalityFilterOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-        </select>
+        <MultiSelectDropdown allLabel="All Modalities" label="Modality" onChange={setModalityFilters} options={modalityFilterOptions} selectedValues={modalityFilters} />
         {showStatusFilter && (
-          <select className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setStatusFilter(event.target.value)} value={normalizedStatusFilter}>
-            {statusFilterOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
+          <MultiSelectDropdown allLabel="All Statuses" label="Status" onChange={setStatusFilters} options={statusFilterOptions} selectedValues={statusFilters} />
         )}
         <select className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setQuickSort(event.target.value)} value={sortConfig.key === 'patient_name' ? 'patient' : sortConfig.key === 'submit_date' ? 'newest' : 'priority'}>
           <option value="priority">Priority: Emergency first</option>
@@ -602,7 +643,7 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
                   <td className={`px-3 py-2 ${statusClass}`}>{caseItem.study_name || '—'}</td>
                   <td className={`px-3 py-2 ${statusClass}`}>{caseItem.remark || '—'}</td>
                   {showStatusColumn && <td className={`px-3 py-2 font-medium ${statusClass}`}>{status || '—'}</td>}
-                  <td className={`px-3 py-2 ${statusClass}`}>{formatTimestamp(caseItem.submitted_at || caseItem.created_at)}</td>
+                  <td className={`px-3 py-2 ${statusClass}`}>{formatTimestamp(caseItem.completed_at || caseItem.submitted_at || caseItem.created_at)}</td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap items-center gap-1.5">
                       {!isDoctorView && showEditForCentre && (
@@ -633,12 +674,6 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
                         </IconButton>
                       )}
 
-                      {isCentreUser && activeTab === 'history' && (
-                        <IconButton className="text-amber-700 hover:border-amber-600 hover:text-amber-800" label="Reopen case" onClick={() => onReopenCase?.(caseItem)}>
-                          <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7" strokeLinecap="round" strokeLinejoin="round" /><path d="M3 4v4h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                        </IconButton>
-                      )}
-
                       {activeTab === 'history' && (
                         <IconButton className="text-indigo-700 hover:border-indigo-600 hover:text-indigo-800" label="Download report" onClick={() => openReportPreview(caseItem)}>
                           <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M12 3v12" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 10l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" /><path d="M5 21h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -648,6 +683,12 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
                       <IconButton label="View attachments" onClick={() => openAttachmentViewer(caseItem)}>
                         <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z" strokeLinecap="round" strokeLinejoin="round" /><circle cx="12" cy="12" r="3" /></svg>
                       </IconButton>
+
+                      {isCentreUser && activeTab === 'history' && (
+                        <IconButton className="text-amber-700 hover:border-amber-600 hover:text-amber-800" label="Reopen case" onClick={() => onReopenCase?.(caseItem)}>
+                          <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7" strokeLinecap="round" strokeLinejoin="round" /><path d="M3 4v4h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                        </IconButton>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -765,9 +806,20 @@ function CaseManagementTable({ user, notice, reloadKey, onEditCase, onReopenCase
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div><label className="mb-1 block text-xs font-medium text-slate-700">Patient</label><input className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={formatPatientName(doctorWorkCase)} /></div>
+              <div><label className="mb-1 block text-xs font-medium text-slate-700">Age (Years - Months)</label><input className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={`${doctorWorkCase.age_year ?? 0} - ${doctorWorkCase.age_month ?? 0}`} /></div>
               <div><label className="mb-1 block text-xs font-medium text-slate-700">Gender</label><input className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={doctorWorkCase.gender || ''} /></div>
               <div><label className="mb-1 block text-xs font-medium text-slate-700">Modality</label><input className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={doctorWorkCase.modality || ''} /></div>
               <div><label className="mb-1 block text-xs font-medium text-slate-700">Study Name</label><input className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={doctorWorkCase.study_name || ''} /></div>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Case Remark</label>
+                <textarea className="h-20 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={doctorWorkCase.remark || '—'} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Diagnostic Centre</label>
+                <input className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={doctorWorkCase.centre_name || doctorWorkCase.centre_id || '—'} />
+              </div>
             </div>
             <div className="mt-3">
               <label className="mb-1 block text-xs font-medium text-slate-700">Doctor Findings</label>

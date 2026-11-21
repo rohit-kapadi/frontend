@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import CentreManagement from './CentreManagement.jsx'
-import StaffManagement from './StaffManagement.jsx'
 import DoctorManagement from './DoctorManagement.jsx'
 import NewCaseModal from './NewCaseModal.jsx'
 import CaseManagementTable from './CaseManagementTable.jsx'
@@ -24,29 +23,20 @@ function WorkspaceDashboard({ user, onLogout }) {
     const links = [
       { key: 'cases', label: 'Cases List' },
     ]
-    if (canCreateCase) links.push({ key: 'new-case', label: 'New Case' })
 
     if (canManageCentresAndStaff && !isDiagnosticCentreUser) {
-      links.push({ key: 'add-centre', label: 'Add Centre' })
-      links.push({ key: 'add-staff', label: 'Add Staff' })
+      links.push({ key: 'add-centre', label: 'Diagnostic Centres' })
     }
 
     if (canManageCentresAndStaff) {
-      links.push({ key: 'add-doctor', label: 'Add Doctor' })
+      links.push({ key: 'add-doctor', label: 'Doctors' })
     }
     links.push({ key: 'dashboard', label: 'Dashboard' })
 
     return links
-  }, [canCreateCase, canManageCentresAndStaff, isDiagnosticCentreUser])
+  }, [canManageCentresAndStaff, isDiagnosticCentreUser])
 
   const handleSidebarSelection = (key) => {
-    if (key === 'new-case') {
-      setCaseModalMode('create')
-      setSelectedCase(null)
-      setIsCaseModalOpen(true)
-      setActiveView('cases')
-      return
-    }
     setActiveView(key)
   }
 
@@ -103,6 +93,11 @@ function WorkspaceDashboard({ user, onLogout }) {
             {activeView === 'cases' && (
               <CaseManagementTable
                 notice={caseNotice}
+                onAddCase={() => {
+                  setCaseModalMode('create')
+                  setSelectedCase(null)
+                  setIsCaseModalOpen(true)
+                }}
                 onEditCase={(caseItem) => {
                   setSelectedCase(caseItem)
                   setCaseModalMode('edit')
@@ -118,7 +113,6 @@ function WorkspaceDashboard({ user, onLogout }) {
               />
             )}
             {activeView === 'add-centre' && <CentreManagement user={user} />}
-            {activeView === 'add-staff' && <StaffManagement user={user} />}
             {activeView === 'add-doctor' && <DoctorManagement user={user} />}
           </section>
         </div>
@@ -154,7 +148,7 @@ function WorkspaceDashboard({ user, onLogout }) {
           setSelectedCase(null)
         }}
         onDeleted={(deletedCase) => {
-          setCaseNotice(deletedCase?.message || `Case #${deletedCase?.case_id} deleted successfully.`)
+          setCaseNotice(deletedCase?.message || `Case #${deletedCase?.case_id} archived successfully.`)
           setCasesReloadKey((previous) => previous + 1)
           setActiveView('cases')
           setIsCaseModalOpen(false)

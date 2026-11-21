@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { requestWithScope } from './managementApi.js'
+import MultiSelectDropdown from './MultiSelectDropdown.jsx'
+import { useRealtimeSync } from './useRealtimeSync.js'
 
 const adminRoles = ['group_admin', 'nexus_admin', 'admin']
 const diagnosticCentreRoles = ['centre_user', 'centre_manager']
@@ -44,6 +46,29 @@ const formatDuration = (milliseconds) => {
   if (days > 0) return `${days}d ${hours}h ${mins}m`
   if (hours > 0) return `${hours}h ${mins}m`
   return `${mins}m`
+}
+
+const formatRupees = (value) => {
+  if (!Number.isFinite(value)) return '₹0'
+  return `₹${Math.round(value).toLocaleString('en-IN')}`
+}
+
+const getBillingSummary = (rows, rateKey) => {
+  let amount = 0
+  let hasError = false
+  rows.forEach((caseItem) => {
+    if (String(caseItem?.status || '') !== 'Submitted') return
+    const rawRate = caseItem?.[rateKey]
+    const numericRate = Number(rawRate)
+    if (!Number.isFinite(numericRate)) {
+      hasError = true
+      return
+    }
+    const priority = String(caseItem?.priority || '').trim().toLowerCase()
+    const multiplier = priority === 'emergency' || priority === 'urgent' ? 1.25 : 1
+    amount += numericRate * multiplier
+  })
+  return { amount, hasError }
 }
 
 const buildDateRange = (start, end) => {
@@ -156,8 +181,8 @@ function DashboardView({ user }) {
   const [cases, setCases] = useState([])
   const [centres, setCentres] = useState([])
   const [doctors, setDoctors] = useState([])
-  const [selectedCentreId, setSelectedCentreId] = useState('')
-  const [selectedDoctorId, setSelectedDoctorId] = useState('')
+  const [selectedCentreIds, setSelectedCentreIds] = useState([])
+  const [selectedDoctorIds, setSelectedDoctorIds] = useState([])
   const [quickSlot, setQuickSlot] = useState('This Month')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
@@ -171,10 +196,28 @@ function DashboardView({ user }) {
   const isDoctor = normalizedRole === 'doctor'
   const isCentreUser = diagnosticCentreRoles.includes(normalizedRole)
 
-  useEffect(() => {
-    let isActive = true
+  const isCaseVisibleForUser = useCallback((caseItem) => {
+    if (!caseItem || String(caseItem.status || '') === 'Archived') return false
+    if (isDoctor) {
+      const status = String(caseItem?.status || '')
+      if (status === 'Unassigned') return true
+      if (['Assigned', 'Submitted', 'Reopened'].includes(status)) {
+        return String(caseItem?.assigned_doctor_id || '') === String(user?.id || '')
+      }
+      return false
+    }
+    if (isCentreUser) return String(caseItem?.centre_id || '') === String(user?.centre_id || '')
+    return true
+  }, [isCentreUser, isDoctor, user?.centre_id, user?.id])
 
-    const requests = [requestWithScope('/cases', user)]
+  const loadDashboardData = useCallback(() => {
+    let isActive = true
+    const query = new URLSearchParams()
+    if (isAdmin && selectedCentreIds.length > 0) query.set('centreIds', selectedCentreIds.join(','))
+    if (isAdmin && selectedDoctorIds.length > 0) query.set('doctorIds', selectedDoctorIds.join(','))
+    const casePath = query.toString() ? `/cases?${query.toString()}` : '/cases'
+
+    const requests = [requestWithScope(casePath, user)]
     if (isAdmin) {
       requests.push(requestWithScope('/centres', user), requestWithScope('/doctors', user))
     }
@@ -199,7 +242,32 @@ function DashboardView({ user }) {
     return () => {
       isActive = false
     }
-  }, [isAdmin, user])
+  }, [isAdmin, selectedCentreIds, selectedDoctorIds, user])
+
+  useEffect(() => loadDashboardData(), [loadDashboardData])
+  const handleRealtimeDashboardChange = useCallback((payload) => {
+    if (payload?.table !== 'cases') {
+      loadDashboardData()
+      return
+    }
+    const nextCase = payload?.new || {}
+    const previousCase = payload?.old || {}
+    const caseId = Number(nextCase.case_id || previousCase.case_id)
+    if (!Number.isInteger(caseId)) return
+    setCases((previous) => {
+      if (payload?.eventType === 'DELETE') {
+        return previous.filter((entry) => Number(entry.case_id) !== caseId)
+      }
+      if (!isCaseVisibleForUser(nextCase)) {
+        return previous.filter((entry) => Number(entry.case_id) !== caseId)
+      }
+      const hasExisting = previous.some((entry) => Number(entry.case_id) === caseId)
+      if (hasExisting) return previous.map((entry) => (Number(entry.case_id) === caseId ? { ...entry, ...nextCase } : entry))
+      return [{ ...nextCase }, ...previous]
+    })
+    loadDashboardData()
+  }, [isCaseVisibleForUser, loadDashboardData])
+  useRealtimeSync({ user, tables: ['cases', 'diagnostic_centres', 'doctors'], onChange: handleRealtimeDashboardChange })
 
   const applyQuickSlot = (value) => {
     const referenceDate = today
@@ -226,11 +294,11 @@ function DashboardView({ user }) {
       if (isDoctor && String(caseItem?.assigned_doctor_id || '') !== String(user?.id || '')) return false
       if (isCentreUser && String(caseItem?.centre_id || '') !== String(user?.centre_id || '')) return false
 
-      if (isAdmin && selectedCentreId && String(caseItem?.centre_id || '') !== selectedCentreId) return false
-      if (isAdmin && selectedDoctorId && String(caseItem?.assigned_doctor_id || '') !== selectedDoctorId) return false
+      if (isAdmin && selectedCentreIds.length > 0 && !selectedCentreIds.includes(String(caseItem?.centre_id || ''))) return false
+      if (isAdmin && selectedDoctorIds.length > 0 && !selectedDoctorIds.includes(String(caseItem?.assigned_doctor_id || ''))) return false
       return true
     })
-  }, [cases, isAdmin, isCentreUser, isDoctor, selectedCentreId, selectedDoctorId, startDate, uptoDate, user?.centre_id, user?.id])
+  }, [cases, isAdmin, isCentreUser, isDoctor, selectedCentreIds, selectedDoctorIds, startDate, uptoDate, user?.centre_id, user?.id])
 
   const metrics = useMemo(() => {
     let reportedCases = 0
@@ -248,11 +316,11 @@ function DashboardView({ user }) {
       if (status !== 'Draft') totalCases += 1
       if (status === 'Submitted') {
         reportedCases += 1
-        if (String(caseItem?.priority || '') === 'Normal') reportedNormal += 1
-        if (String(caseItem?.priority || '') === 'Emergency') reportedEmergency += 1
+        if (String(caseItem?.priority || '').toLowerCase() === 'normal') reportedNormal += 1
+        if (['emergency', 'urgent'].includes(String(caseItem?.priority || '').toLowerCase())) reportedEmergency += 1
 
         const createdAt = parseTimestamp(caseItem?.created_at)
-        const submittedAt = parseTimestamp(caseItem?.submitted_at)
+        const submittedAt = parseTimestamp(caseItem?.completed_at || caseItem?.submitted_at)
         if (createdAt && submittedAt && submittedAt >= createdAt) {
           tatTotalMs += (submittedAt.getTime() - createdAt.getTime())
           tatCount += 1
@@ -275,6 +343,9 @@ function DashboardView({ user }) {
       tatCount,
     }
   }, [filteredCases])
+
+  const centrePay = useMemo(() => getBillingSummary(filteredCases, 'centre_rate'), [filteredCases])
+  const doctorPayout = useMemo(() => getBillingSummary(filteredCases, 'doctor_rate'), [filteredCases])
 
   const modalitySegments = useMemo(() => {
     const counter = new Map()
@@ -326,31 +397,26 @@ function DashboardView({ user }) {
           </div>
           {isAdmin && (
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="dashboard-centre-filter">Diagnostic Centre</label>
-              <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" id="dashboard-centre-filter" onChange={(event) => setSelectedCentreId(event.target.value)} value={selectedCentreId}>
-                <option value="">All Centres</option>
-                {centres.map((centre) => (
-                  <option key={centre.centre_id} value={centre.centre_id}>
-                    {centre.centre_id} - {centre.name}
-                  </option>
-                ))}
-              </select>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Diagnostic Centre</label>
+              <MultiSelectDropdown
+                allLabel="All Centres"
+                label="Centres"
+                onChange={setSelectedCentreIds}
+                options={centres.map((centre) => centre.centre_id)}
+                selectedValues={selectedCentreIds}
+              />
             </div>
           )}
           {isAdmin && (
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="dashboard-doctor-filter">Doctor</label>
-              <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" id="dashboard-doctor-filter" onChange={(event) => setSelectedDoctorId(event.target.value)} value={selectedDoctorId}>
-                <option value="">All Doctors</option>
-                {doctors.map((doctor) => {
-                  const doctorName = [doctor.first_name, doctor.last_name].filter(Boolean).join(' ').trim()
-                  return (
-                    <option key={doctor.doctor_id} value={doctor.doctor_id}>
-                      {doctor.doctor_id} - {doctorName || doctor.email || doctor.doctor_id}
-                    </option>
-                  )
-                })}
-              </select>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Doctor</label>
+              <MultiSelectDropdown
+                allLabel="All Doctors"
+                label="Doctors"
+                onChange={setSelectedDoctorIds}
+                options={doctors.map((doctor) => doctor.doctor_id)}
+                selectedValues={selectedDoctorIds}
+              />
             </div>
           )}
         </div>
@@ -364,6 +430,25 @@ function DashboardView({ user }) {
         <MetricCard label="Total Cases" value={metrics.totalCases} />
         <MetricCard label="Action Required" value={metrics.actionRequiredCases} />
       </section>
+
+      {(isAdmin || isCentreUser || isDoctor) && (
+        <section className={`grid gap-3 ${isAdmin ? 'sm:grid-cols-2' : 'sm:grid-cols-1'}`}>
+          {(isAdmin || isCentreUser) && (
+            <MetricCard
+              hint="For selected date range and filters"
+              label="Diagnostic Centre Pay"
+              value={centrePay.hasError ? '⚠ ₹0' : formatRupees(centrePay.amount)}
+            />
+          )}
+          {(isAdmin || isDoctor) && (
+            <MetricCard
+              hint="For selected date range and filters"
+              label="Doctor Payout"
+              value={doctorPayout.hasError ? '⚠ ₹0' : formatRupees(doctorPayout.amount)}
+            />
+          )}
+        </section>
+      )}
 
       {isAdmin && (
         <section>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { requestWithScope } from './managementApi.js'
+import { useRealtimeSync } from './useRealtimeSync.js'
 
 const defaultStaffForm = {
   selectedCentreId: '',
@@ -10,6 +11,7 @@ const defaultStaffForm = {
 
 function StaffManagement({ user }) {
   const [mode, setMode] = useState('add')
+  const [isModalOpen, setIsModalOpen] = useState(false)
   const [centres, setCentres] = useState([])
   const [staffUsers, setStaffUsers] = useState([])
   const [form, setForm] = useState(defaultStaffForm)
@@ -19,7 +21,6 @@ function StaffManagement({ user }) {
 
   function resetFormState() {
     setForm(defaultStaffForm)
-    setStaffUsers([])
   }
 
   async function loadCentres() {
@@ -27,62 +28,46 @@ function StaffManagement({ user }) {
     setCentres(result.centres ?? [])
   }
 
-  async function loadStaff(centreId) {
-    if (!centreId) {
-      setStaffUsers([])
-      return
-    }
-    const result = await requestWithScope(`/centre-users?centreId=${encodeURIComponent(centreId)}`, user)
+  async function loadStaff() {
+    const result = await requestWithScope('/centre-users', user)
     setStaffUsers(result.users ?? [])
   }
 
   useEffect(() => {
     loadCentres().catch((loadError) => setError(loadError.message))
+    loadStaff().catch((loadError) => setError(loadError.message))
   }, [])
+  useRealtimeSync({ user, tables: ['centre_users', 'diagnostic_centres'], onChange: loadStaff })
 
   useEffect(() => {
-    resetFormState()
-    setError('')
-    setNotice('')
-  }, [mode])
-
-  useEffect(() => {
-    if (!form.selectedCentreId) {
-      setForm((previous) => ({ ...previous, userIdPreview: '', selectedUserId: '' }))
-      setStaffUsers([])
+    if (!isModalOpen || !form.selectedCentreId) {
+      setForm((previous) => ({ ...previous, userIdPreview: '' }))
       return
     }
-
-    if (mode === 'add') {
-      requestWithScope(`/centre-users/preview-id?centreId=${encodeURIComponent(form.selectedCentreId)}`, user)
-        .then((result) => {
-          setForm((previous) => ({ ...previous, userIdPreview: result.user_id || '' }))
-        })
-        .catch(() => {
-          setForm((previous) => ({ ...previous, userIdPreview: '' }))
-        })
-      return
-    }
-
-    loadStaff(form.selectedCentreId).catch(() => setStaffUsers([]))
-    setForm((previous) => ({ ...previous, selectedUserId: '', userIdPreview: '', email: '' }))
-  }, [mode, form.selectedCentreId])
+    if (mode !== 'add') return
+    requestWithScope(`/centre-users/preview-id?centreId=${encodeURIComponent(form.selectedCentreId)}`, user)
+      .then((result) => {
+        setForm((previous) => ({ ...previous, userIdPreview: result.user_id || '' }))
+      })
+      .catch(() => {
+        setForm((previous) => ({ ...previous, userIdPreview: '' }))
+      })
+  }, [form.selectedCentreId, isModalOpen, mode])
 
   async function handleStaffSelection(userId) {
+    if (!userId) return
     setError('')
     setNotice('')
-    if (!userId) {
-      setForm((previous) => ({ ...previous, selectedUserId: '', email: '' }))
-      return
-    }
-
     try {
       const result = await requestWithScope(`/centre-users/${encodeURIComponent(userId)}`, user)
-      setForm((previous) => ({
-        ...previous,
+      setMode('edit')
+      setIsModalOpen(true)
+      setForm({
+        selectedCentreId: result.user.centre_id || '',
         selectedUserId: result.user.user_id || '',
+        userIdPreview: '',
         email: result.user.email || '',
-      }))
+      })
     } catch (selectionError) {
       setError(selectionError instanceof Error ? selectionError.message : 'Unable to load staff details right now.')
     }
@@ -109,9 +94,9 @@ function StaffManagement({ user }) {
         })
         setNotice(`Staff user ${result.user.user_id} updated successfully.`)
       }
-
+      await loadStaff()
+      setIsModalOpen(false)
       resetFormState()
-      await loadCentres()
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Unable to save staff user right now.')
     } finally {
@@ -120,61 +105,84 @@ function StaffManagement({ user }) {
   }
 
   return (
-    <section className="mx-auto w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-      <p className="text-sm font-semibold uppercase tracking-wider text-teal-700">Onboarding</p>
-      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{mode === 'add' ? 'Add Staff' : 'Edit Staff'}</h2>
-
-      <div className="mt-6">
-        <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="staff-mode">Mode</label>
-        <select className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="staff-mode" onChange={(event) => setMode(event.target.value)} value={mode}>
-          <option value="add">ADD</option>
-          <option value="edit">EDIT</option>
-        </select>
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-slate-900">Staff / Users</h2>
+        <button
+          className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800"
+          onClick={() => {
+            setMode('add')
+            resetFormState()
+            setIsModalOpen(true)
+          }}
+          type="button"
+        >
+          + Add User
+        </button>
       </div>
 
-      <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
-        <div>
-          <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="staff-centre">Centre</label>
-          <select className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="staff-centre" onChange={(event) => setForm((previous) => ({ ...previous, selectedCentreId: event.target.value }))} required value={form.selectedCentreId}>
-            <option value="">Select centre</option>
-            {centres.map((centre) => (
-              <option key={centre.centre_id} value={centre.centre_id}>
-                {centre.centre_id} - {centre.name}
-              </option>
+      {error && <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+      {notice && <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</p>}
+
+      <div className="overflow-auto rounded-xl border border-slate-200">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-100 text-left text-xs uppercase tracking-wider text-slate-600">
+            <tr>
+              <th className="px-3 py-2">User ID</th>
+              <th className="px-3 py-2">Centre</th>
+              <th className="px-3 py-2">Email</th>
+              <th className="px-3 py-2">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {staffUsers.map((staff) => (
+              <tr className="border-t border-slate-200" key={staff.user_id}>
+                <td className="px-3 py-2">{staff.user_id}</td>
+                <td className="px-3 py-2">{staff.centre_id}</td>
+                <td className="px-3 py-2">{staff.email}</td>
+                <td className="px-3 py-2">
+                  <button className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50" onClick={() => handleStaffSelection(staff.user_id)} type="button">✎ Edit</button>
+                </td>
+              </tr>
             ))}
-          </select>
-        </div>
+            {staffUsers.length === 0 && <tr><td className="px-3 py-6 text-center text-slate-500" colSpan={4}>No staff users found.</td></tr>}
+          </tbody>
+        </table>
+      </div>
 
-        {mode === 'edit' && (
-          <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="staff-select">Select staff</label>
-            <select className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="staff-select" onChange={(event) => handleStaffSelection(event.target.value)} value={form.selectedUserId}>
-              <option value="">Select staff</option>
-              {staffUsers.map((staff) => (
-                <option key={staff.user_id} value={staff.user_id}>
-                  {staff.user_id} - {staff.email}
-                </option>
-              ))}
-            </select>
+      {isModalOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/45 px-3 py-4">
+          <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">{mode === 'add' ? 'Add Staff User' : 'Edit Staff User'}</h3>
+              <button className="rounded border border-slate-300 px-2 py-1 text-sm" onClick={() => setIsModalOpen(false)} type="button">Close</button>
+            </div>
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Centre</label>
+                <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" onChange={(event) => setForm((previous) => ({ ...previous, selectedCentreId: event.target.value }))} required value={form.selectedCentreId}>
+                  <option value="">Select centre</option>
+                  {centres.map((centre) => <option key={centre.centre_id} value={centre.centre_id}>{centre.centre_id} - {centre.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">User ID</label>
+                <input className="w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-sm" readOnly value={mode === 'add' ? form.userIdPreview : form.selectedUserId} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Email</label>
+                <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" onChange={(event) => setForm((previous) => ({ ...previous, email: event.target.value }))} required type="email" value={form.email} />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button className="rounded border border-slate-300 px-3 py-1.5 text-sm" onClick={() => setIsModalOpen(false)} type="button">Cancel</button>
+                <button className="rounded bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60" disabled={isSubmitting || !form.selectedCentreId || (mode === 'add' && !form.userIdPreview) || (mode === 'edit' && !form.selectedUserId)} type="submit">
+                  {isSubmitting ? 'Saving...' : mode === 'add' ? 'Create User' : 'Update User'}
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-
-        <div>
-          <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="staff-user-id">User ID</label>
-          <input className="w-full rounded-xl border border-slate-300 bg-slate-100 px-4 py-3 text-sm text-slate-700" id="staff-user-id" readOnly value={mode === 'add' ? form.userIdPreview : form.selectedUserId} />
         </div>
-
-        <div>
-          <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="staff-email">Email</label>
-          <input className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" id="staff-email" onChange={(event) => setForm((previous) => ({ ...previous, email: event.target.value }))} required type="email" value={form.email} />
-        </div>
-
-        {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-        {notice && <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</p>}
-        <button className="w-full rounded-xl bg-teal-700 px-4 py-3 font-semibold text-white hover:bg-teal-800 disabled:opacity-60" disabled={isSubmitting || !form.selectedCentreId || (mode === 'add' && !form.userIdPreview) || (mode === 'edit' && !form.selectedUserId)} type="submit">
-          {isSubmitting ? 'Saving staff...' : mode === 'add' ? 'Create Staff User' : 'Update Staff User'}
-        </button>
-      </form>
+      )}
     </section>
   )
 }

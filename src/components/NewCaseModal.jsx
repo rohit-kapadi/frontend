@@ -47,6 +47,15 @@ const mapCaseToForm = (caseItem, fallbackCentreId) => ({
 })
 
 const adminStatusOptions = ['Draft', 'Unassigned', 'Assigned', 'Reverted', 'Reopened', 'Submitted']
+const patientNameMaxLength = 30
+const studyNameMaxLength = 50
+const remarksMaxLength = 1000
+
+const getRemainingHint = (value, maxLength) => {
+  const currentLength = String(value || '').length
+  if (currentLength < Math.ceil(maxLength * 0.75)) return ''
+  return `${maxLength - currentLength} characters remaining`
+}
 
 function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened, onDeleted, mode = 'create', initialCase = null }) {
   const [form, setForm] = useState(defaultForm)
@@ -179,8 +188,8 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
 
     const years = Number(form.ageYears || 0)
     const months = Number(form.ageMonths || 0)
-    if (!Number.isInteger(years) || years < 0 || years > 120) {
-      setError('Age years must be a whole number between 0 and 120.')
+    if (!Number.isInteger(years) || years < 0 || years > 100) {
+      setError('Age years must be a whole number between 0 and 100.')
       return
     }
     if (!Number.isInteger(months) || months < 0 || months > 11) {
@@ -197,6 +206,18 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
     }
     if (!form.studyName.trim()) {
       setError('Study name is required.')
+      return
+    }
+    if (form.patientFirstName.trim().length > patientNameMaxLength || form.patientSurname.trim().length > patientNameMaxLength) {
+      setError('Patient first name and surname cannot exceed 30 characters each.')
+      return
+    }
+    if (form.studyName.trim().length > studyNameMaxLength) {
+      setError('Study name cannot exceed 50 characters.')
+      return
+    }
+    if (form.remark.trim().length > remarksMaxLength) {
+      setError('Remark cannot exceed 1000 characters.')
       return
     }
     if (!isUpdateMode && scanFiles.length === 0) {
@@ -266,7 +287,7 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
 
   async function handleDeleteCase() {
     if (!isAdmin || !isEditMode || !initialCase?.case_id) return
-    const confirmed = window.confirm('Delete this case permanently? This will remove the case and all uploaded attachments. This action cannot be undone.')
+    const confirmed = window.confirm('Archive this case? This will hide it from all user views.')
     if (!confirmed) return
 
     setError('')
@@ -333,17 +354,29 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
           )}
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div><label className="mb-1 block text-xs font-medium text-slate-700">Patient first name</label><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setForm((previous) => ({ ...previous, patientFirstName: event.target.value }))} required value={form.patientFirstName} /></div>
-            <div><label className="mb-1 block text-xs font-medium text-slate-700">Patient surname</label><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setForm((previous) => ({ ...previous, patientSurname: event.target.value }))} required value={form.patientSurname} /></div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Patient first name</label>
+              <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" maxLength={patientNameMaxLength} onChange={(event) => setForm((previous) => ({ ...previous, patientFirstName: event.target.value }))} required value={form.patientFirstName} />
+              {getRemainingHint(form.patientFirstName, patientNameMaxLength) && <p className="mt-1 text-xs text-amber-700">{getRemainingHint(form.patientFirstName, patientNameMaxLength)}</p>}
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Patient surname</label>
+              <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" maxLength={patientNameMaxLength} onChange={(event) => setForm((previous) => ({ ...previous, patientSurname: event.target.value }))} required value={form.patientSurname} />
+              {getRemainingHint(form.patientSurname, patientNameMaxLength) && <p className="mt-1 text-xs text-amber-700">{getRemainingHint(form.patientSurname, patientNameMaxLength)}</p>}
+            </div>
             <div><label className="mb-1 block text-xs font-medium text-slate-700">Gender</label><select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setForm((previous) => ({ ...previous, gender: event.target.value }))} required value={form.gender}>{genderOptions.map((gender) => <option key={gender} value={gender}>{gender}</option>)}</select></div>
             <div><label className="mb-1 block text-xs font-medium text-slate-700">Mobile (optional)</label><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" maxLength={10} onChange={(event) => setForm((previous) => ({ ...previous, mobile: event.target.value.replace(/\D/g, '').slice(0, 10) }))} placeholder="10 digits" value={form.mobile} /></div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <div><label className="mb-1 block text-xs font-medium text-slate-700">Age years</label><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" min={0} max={120} onChange={(event) => setForm((previous) => ({ ...previous, ageYears: event.target.value.replace(/[^\d]/g, '') }))} required type="number" value={form.ageYears} /></div>
+            <div><label className="mb-1 block text-xs font-medium text-slate-700">Age years</label><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" min={0} max={100} onChange={(event) => setForm((previous) => ({ ...previous, ageYears: event.target.value.replace(/[^\d]/g, '').slice(0, 3) }))} required type="number" value={form.ageYears} /></div>
             <div><label className="mb-1 block text-xs font-medium text-slate-700">Age months</label><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" min={0} max={11} onChange={(event) => setForm((previous) => ({ ...previous, ageMonths: event.target.value.replace(/[^\d]/g, '') }))} required type="number" value={form.ageMonths} /></div>
             <div><label className="mb-1 block text-xs font-medium text-slate-700">Modality</label><select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setForm((previous) => ({ ...previous, modality: event.target.value }))} required value={form.modality}>{modalityOptions.map((modality) => <option key={modality} value={modality}>{modality}</option>)}</select></div>
-            <div className="sm:col-span-2"><label className="mb-1 block text-xs font-medium text-slate-700">Study name</label><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setForm((previous) => ({ ...previous, studyName: event.target.value }))} required value={form.studyName} /></div>
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-700">Study name</label>
+              <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" maxLength={studyNameMaxLength} onChange={(event) => setForm((previous) => ({ ...previous, studyName: event.target.value }))} required value={form.studyName} />
+              {getRemainingHint(form.studyName, studyNameMaxLength) && <p className="mt-1 text-xs text-amber-700">{getRemainingHint(form.studyName, studyNameMaxLength)}</p>}
+            </div>
           </div>
 
           <div>
@@ -361,7 +394,8 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-700">Remark (optional)</label>
-              <textarea className="h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setForm((previous) => ({ ...previous, remark: event.target.value }))} value={form.remark} />
+              <textarea className="h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" maxLength={remarksMaxLength} onChange={(event) => setForm((previous) => ({ ...previous, remark: event.target.value }))} value={form.remark} />
+              {getRemainingHint(form.remark, remarksMaxLength) && <p className="mt-1 text-xs text-amber-700">{getRemainingHint(form.remark, remarksMaxLength)}</p>}
             </div>
             <div className="space-y-2">
               <div>
@@ -397,6 +431,12 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
               <textarea className="h-24 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10" onChange={(event) => setReopenMessage(event.target.value)} placeholder="Explain why the case is being reopened" required value={reopenMessage} />
             </div>
           )}
+          {!isReopenMode && isEditMode && initialCase?.reject_remark && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">Reopen Remark</label>
+              <textarea className="h-20 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm" disabled value={initialCase.reject_remark} />
+            </div>
+          )}
 
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
           {notice && <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>}
@@ -405,7 +445,7 @@ function NewCaseModal({ user, isOpen, onClose, onCreated, onUpdated, onReopened,
             <div>
               {isAdmin && isEditMode && (
                 <button className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60" disabled={isSubmitting} onClick={handleDeleteCase} type="button">
-                  Delete Case
+                  Archive Case
                 </button>
               )}
             </div>
